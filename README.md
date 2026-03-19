@@ -1,95 +1,65 @@
-# FlexBE States and Behaviors for flexbe_webots_swarm
+## Webots 群体机器人 FlexBE 行为包
 
-Generic template for a behaviors repository to be used for new projects
+本包为 Webots 群体机器人（swarm）项目提供 FlexBE 行为与状态，用于对不同机器人小队的运动进行统一调度控制。
 
-Modify this README as needed for your specific project details.
+当前仓库只保留了与实际任务相关的核心文件：
 
-Below we provide basic details, but you are free to delete or modify this README as you wish.
+- `flexbe_webots_swarm_flexbe_states/team_move_state.py`
+- `flexbe_webots_swarm_flexbe_states/team_wait_state.py`
+- `flexbe_webots_swarm_flexbe_behaviors/swarmmoveexample1_sm.py`
 
-----
+### `team_move_state.py`：小队运动控制状态
 
-This raw repository has several folders and files with the generic name `flexbe_webots_swarm`.
+**位置**：`flexbe_webots_swarm_flexbe_states/team_move_state.py`  
+**作用**：向指定小队（例如 `scout`、`carrier`）发布速度控制指令，在给定时间内保持线速度和角速度，实现：
 
+- 直线前进（`linear_x` > 0，`angular_z` = 0）
+- 转弯 / 原地旋转（`linear_x` = 0，`angular_z` ≠ 0）
+- 通过 `duration` 控制动作持续时间
 
-This repository is used by the FlexBE widget 
-[`create_repo`](https://github.com/FlexBE/flexbe_behavior_engine/blob/ros2-devel/flexbe_widget/bin/create_repo) 
-script to create an example project that you can build off of to add your own states and behaviors.  
+在 FlexBE 行为中，可以通过设置：
 
-Using `ros2 run flexbe_widget create_repo <my_new_project_name>` will clone this repository, 
-and change the relevant `flexbe_webots_swarm` text to `my_new_project_name` as needed.
+- `team_name`：要控制的小队名称
+- `linear_x` / `angular_z`：运动指令
+- `duration`：本段动作持续时间  
 
-It sets up the `package.xml` files with proper FlexBE export tags.
-It is maintained at version `0.0.1` as the starting point for your work.
+正常完成会返回 `done`，异常时返回 `failed`。
 
-We have provided a license file to conform to ROS guidelines; however, you are free to replace the 
-`LICENSE` file, and apply whatever license you choose to states and behaviors that you create.
+### `team_wait_state.py`：小队等待 / 停留状态
 
-This repository contains an example behavior and examples for writing your own state implementations.
+**位置**：`flexbe_webots_swarm_flexbe_states/team_wait_state.py`  
+**作用**：在行为流程中插入一段纯时间等待，用于：
 
-## Example States in `flexbe_webots_swarm_flexbe_states`
+- 让连续动作之间留出停顿，使行为节奏更清晰
+- 等待上一个运动结束、姿态稳定或传感器数据更新
 
-Packages providing FlexBE states are identified by an export tag in the `package.xml`:
+该状态只接收一个 `duration` 参数（秒），到时后返回 `done`，不发布任何运动指令。
 
-```xml
-  <export>
-      <flexbe_states />
-      <build_type>ament_cmake</build_type>
-  </export>
-```
+### `swarmmoveexample1_sm.py`：Swarm Move Example 1 行为
 
-* `example_state.py `
-  * Example state implementation with extra console logging to show the state life cycle.
+**位置**：`flexbe_webots_swarm_flexbe_behaviors/swarmmoveexample1_sm.py`  
+**行为名称**：`Swarm Move Example 1`（类 `SwarmMoveExample1SM`）
 
-* `example_action_state.py`
+该行为使用 `TeamMoveState` 和 `TeamWaitState` 组合出了一个示例群体运动流程：
 
-> Note: These example states are defined with extra console logging that is useful when learning FlexBE, 
-> but you will typically not include so much of the `Logger.info` commands as in these examples.
+1. **Scout 小队前进 2 秒**  
+   `team_name='scout'，linear_x=0.3，angular_z=0.0，duration=2.0`
+2. **Scout 小队等待 2 秒**
+3. **Scout 小队左转 3 秒**  
+   `team_name='scout'，linear_x=0.0，angular_z=0.3，duration=3.0`
+4. **Scout 小队再等待 1 秒**
+5. **Carrier 小队前进 2 秒，行为结束**  
+   `team_name='carrier'，linear_x=0.3，angular_z=0.0，duration=2.0`
 
-> Note: You are free to copy and modify these files to create your own files and publish under your own license terms.
-> As per the existing licenses, no warranty is implied.
+通过这个示例可以看到：
 
-## Example Behaviors in `flexbe_webots_swarm_flexbe_behaviors`
+- 使用同一套状态即可控制不同角色（如 `scout` / `carrier`）的小队
+- 通过“运动状态 + 等待状态”的组合，可以拼装出清晰可读的群体任务序列
 
-Packages providing FlexBE behaviors are identified by an export tag in the `package.xml`:
+### 使用说明（简要）
 
-```xml
-  <export>
-      <flexbe_behaviors />
-      <build_type>ament_cmake</build_type>
-  </export>
-```
+1. 确保本包已在 ROS2 中成功构建并安装。  
+2. 在 FlexBE App 中加载本行为包后，可以直接运行 `Swarm Move Example 1` 行为，观察 Webots 中各机器人小队的动作。  
+3. 可以以当前三个核心文件为模板，继续添加更多小队控制状态与更复杂的 swarm 行为。
 
-  * `example_behavior_sm.py`
-    * Most basic example state machine
-
-  * `example_action_behavior_sm.py` 
-    * Uses the `ExampleActionState` with the standard action tutorials 
-
-        [Understanding ROS2 Actions](https://docs.ros.org/en/iron/Tutorials/Beginner-CLI-Tools/Understanding-ROS2-Actions/Understanding-ROS2-Actions.html)
-
-        [Introducing Turtlesim](https://docs.ros.org/en/iron/Tutorials/Beginner-CLI-Tools/Introducing-Turtlesim/Introducing-Turtlesim.html)
-        
-        To execute the associated behavior in FlexBE, you need to first run the turtlesim node that provdes the action server
-
-        `ros2 run turtlesim turtlesim_node`
-        
-        To display the available actions:
-
-        `ros2 action list`
-        
-        The action is defined by:
-
-        `/turtle1/rotate_absolute:` [`turtlesim/action/RotateAbsolute`](https://docs.ros2.org/latest/api/turtlesim/action/RotateAbsolute.html)
-
-Behaviors typically edited and generated by the FlexBE UI.  
-These generated files are stored in the root workspace `install` folder.
-Presuming a `WORKSPACE_ROOT` environment variable exists, we provide a simple 
-[`copy_behavior`](flexbe_webots_swarm_flexbe_behaviors/bin/copy_behavior) script to copy a saved behavior 
-&mdash; both the Python implementation and manifest `.xml` file &mdash; 
-to the project source folder for long term storage.
-Use `ros2 run flexbe_webots_swarm_flexbe_behavior copy_behavior` to see the usage guide. 
-The script should be run from this repository's base folder.
-
-For a Quick-start and more comprehensive introduction to FlexBE, 
-see the [FlexBE Turtlesim Demonstrations](https://github.com/FlexBE/flexbe_turtlesim_demo).
-
+说明：原始仓库中与 `example_*` 相关的通用示例状态和行为文件已被删除，只保留与 Webots 群体机器人项目直接相关的实现，以避免示例代码污染仓库。
