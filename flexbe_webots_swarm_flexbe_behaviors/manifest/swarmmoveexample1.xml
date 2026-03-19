@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<behavior name="Swarm Move Example 1">
+
+    <executable package_path="flexbe_webots_swarm_flexbe_behaviors.swarmmoveexample1_sm" class="SwarmMoveExample1SM" />
+    <tagstring>swarm, demo</tagstring>
+    <author>ZKW</author>
+    <date>Thu Mar 19 2026</date>
+    <description>
+        scout集群往前走2秒之后停留2秒，之后Scout集群往左走3秒，再停留1秒，最后Carrier集群往前走2秒
+    </description>
+
+
+    <!-- Contained Behaviors -->
+
+    <!-- Available Parameters -->
+
+</behavior>

@@ -22,29 +22,6 @@ from flexbe_core import EventState, Logger
 
 
 class ExampleState(EventState):
-    """
-    Example for a state to demonstrate which functionality is available for state implementation.
-
-    All FlexBE states should inherit from EventState.
-
-    This example lets the behavior wait until the given target_time has passed since
-    entering the state.
-
-    The state also records the time the behavior was activated and exited.
-
-    The UI parses this description for data about the state to diplay.
-
-    List parameter values with double hyphens
-    -- target_time     float     Time which needs to have passed since the behavior started.
-
-    List labeled outcomes using the double arrow notation (must match constructor)
-    <= done            Given time has passed.
-    <= failed          Example for a failure outcome.
-
-    List input and output user data that is passes along using
-        These are optional and not included in this example.
-    """
-
     def __init__(self, target_time):
         """Declare outcomes, input_keys, and output_keys by calling the super constructor with the corresponding arguments."""
         super().__init__(outcomes=['done', 'failed'])
