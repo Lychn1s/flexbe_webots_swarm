@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'example_action_state = flexbe_webots_swarm_flexbe_states.example_action_state',
             'example_state = flexbe_webots_swarm_flexbe_states.example_state',
+            'pyc2_command_handler = flexbe_webots_swarm_flexbe_states.pyc2_command_handler:main',
         ],
     },
 )
