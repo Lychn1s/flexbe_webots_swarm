@@ -1,34 +1,65 @@
 #!/usr/bin/env python3
-"""
-PyC2 Command Handler Node.
+"""PyC2 → FlexBE dispatcher.
 
-订阅 /pyc2/commands，解析 JSON 命令，
-根据 command 字段驱动对应的 FlexBE state 执行，
-完成后发布结果到 /pyc2/results。
+Subscribes to `/pyc2/commands` (std_msgs/String, JSON payload) and routes
+each command to a FlexBE behavior via the
+`flexbe/execute_behavior` Action (`flexbe_msgs.action.BehaviorExecution`).
+This keeps the PyC2 JSON protocol stable while ensuring the FlexBE engine
+is actually in the loop (flexbe_onboard drives the behavior + state machine;
+the state publishes Webots String/GOTO control).
 
-支持的 command:
-  - team_move: params = {team_name, linear_x, angular_z, duration}
-  - team_wait: params = {duration}
+Supported commands:
+  - team_goto     : {team_name, x, y, tolerance, timeout}
+                    → "Team Goto Behavior" (member_ids resolved here)
+  - formation_goto: {members, x, y, tolerance, timeout}
+                    → "Formation Goto Behavior"
+  - team_move     : {team_name, linear_x, angular_z, duration}  [legacy]
+                    → "Team Move Behavior"
+  - team_wait     : {duration}
+                    → "Team Wait Behavior"
+
+Requires the flexbe_widget `be_action_server` to be running (it serves
+`flexbe/execute_behavior` and bridges to flexbe_onboard internally).
 """
 import json
 import threading
-import time
 
 import rclpy
+from rclpy.action import ActionClient
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+
+from flexbe_msgs.action import BehaviorExecution
 from std_msgs.msg import String
-from geometry_msgs.msg import Twist
+
+
+SCOUT_IDS = [f'scout_{i}' for i in range(10)]
+CARRIER_IDS = [f'carrier_{i}' for i in range(20)]
+
+BEHAVIOR_NAME = {
+    'team_goto': 'Team Goto Behavior',
+    'formation_goto': 'Formation Goto Behavior',
+    'team_move': 'Team Move Behavior',
+    'team_wait': 'Team Wait Behavior',
+}
+
+EXECUTE_BEHAVIOR_ACTION = 'flexbe/execute_behavior'
+GOAL_WAIT_TIMEOUT = 5.0
+ACTION_SERVER_READY_TIMEOUT = 30.0
 
 
 class PyC2CommandHandler(Node):
-    """ROS2 node that bridges /pyc2/commands to actual robot team topics."""
+    """Thin dispatcher: PyC2 JSON → FlexBE BehaviorExecution action."""
 
     COMMAND_TOPIC = '/pyc2/commands'
     RESULT_TOPIC = '/pyc2/results'
 
     def __init__(self):
         super().__init__('pyc2_command_handler')
+
+        self._cb_group = ReentrantCallbackGroup()
 
         qos_reliable = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -41,36 +72,58 @@ class PyC2CommandHandler(Node):
             depth=1,
         )
 
-        # Subscribe to PyC2 commands
         self._cmd_sub = self.create_subscription(
-            String, self.COMMAND_TOPIC, self._on_command, qos_best_effort
+            String, self.COMMAND_TOPIC, self._on_command, qos_best_effort,
+            callback_group=self._cb_group,
+        )
+        self._result_pub = self.create_publisher(
+            String, self.RESULT_TOPIC, qos_reliable,
         )
 
-        # Publish results back to PyC2
-        self._result_pub = self.create_publisher(String, self.RESULT_TOPIC, qos_reliable)
+        self._action_client = ActionClient(
+            self, BehaviorExecution, EXECUTE_BEHAVIOR_ACTION,
+            callback_group=self._cb_group,
+        )
 
-        # Cache of velocity publishers per team
-        self._vel_pubs = {}
-        self._qos_vel = qos_reliable
+        # Wait (non-blocking to ROS) for the action server. We do this in a
+        # background thread so the node constructor returns quickly and the
+        # executor can start spinning; messages arriving before the server is
+        # up are rejected gracefully in _dispatch.
+        self._action_ready = threading.Event()
+        threading.Thread(target=self._wait_for_action_server, daemon=True).start()
 
-        self.get_logger().info('PyC2CommandHandler ready, listening on /pyc2/commands')
+        self.get_logger().info(
+            f'PyC2CommandHandler ready on {self.COMMAND_TOPIC}; '
+            f'action client pending {EXECUTE_BEHAVIOR_ACTION}'
+        )
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _get_vel_pub(self, team_name: str):
-        """Get or create a cmd_vel publisher for a team."""
-        if team_name not in self._vel_pubs:
-            topic = f'/{team_name}_team/cmd_vel'
-            self._vel_pubs[team_name] = self.create_publisher(
-                Twist, topic, self._qos_vel
+    # ------------------------------------------------------------------ #
+    # setup
+    # ------------------------------------------------------------------ #
+    def _wait_for_action_server(self):
+        ready = self._action_client.wait_for_server(timeout_sec=ACTION_SERVER_READY_TIMEOUT)
+        if ready:
+            self._action_ready.set()
+            self.get_logger().info(f'✓ action server {EXECUTE_BEHAVIOR_ACTION} is up')
+        else:
+            self.get_logger().error(
+                f'✗ action server {EXECUTE_BEHAVIOR_ACTION} not available after '
+                f'{ACTION_SERVER_READY_TIMEOUT}s; commands will fail until it starts.'
             )
-            self.get_logger().info(f'Created publisher for {topic}')
-        return self._vel_pubs[team_name]
+
+    # ------------------------------------------------------------------ #
+    # helpers
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _resolve_members(team_name: str):
+        team = (team_name or '').lower()
+        if team == 'scout':
+            return list(SCOUT_IDS)
+        if team == 'carrier':
+            return list(CARRIER_IDS)
+        return []
 
     def _publish_result(self, command_id: str, status: str, message: str = ''):
-        """Publish result back to PyC2."""
         payload = {
             'command_id': command_id,
             'status': status,
@@ -79,109 +132,182 @@ class PyC2CommandHandler(Node):
         msg = String()
         msg.data = json.dumps(payload, ensure_ascii=False)
         self._result_pub.publish(msg)
-        self.get_logger().info(f'Result published: {payload}')
+        self.get_logger().info(f'Result: {payload}')
 
-    # ------------------------------------------------------------------
-    # Command dispatch
-    # ------------------------------------------------------------------
+    @staticmethod
+    def _stringify_args(args: dict):
+        """FlexBE arg_values are strings; JSON-encode lists/dicts."""
+        arg_keys = []
+        arg_values = []
+        for k, v in args.items():
+            arg_keys.append(str(k))
+            if isinstance(v, (list, tuple, dict)):
+                arg_values.append(json.dumps(v, ensure_ascii=False))
+            elif isinstance(v, bool):
+                arg_values.append('True' if v else 'False')
+            else:
+                arg_values.append(str(v))
+        return arg_keys, arg_values
 
+    # ------------------------------------------------------------------ #
+    # command routing
+    # ------------------------------------------------------------------ #
     def _on_command(self, msg: String):
-        """Callback for incoming PyC2 commands. Runs in a background thread."""
         try:
             data = json.loads(msg.data)
-        except json.JSONDecodeError as e:
-            self.get_logger().error(f'Invalid JSON in command: {e}')
+        except json.JSONDecodeError as exc:
+            self.get_logger().error(f'Invalid JSON in command: {exc}')
             return
 
         command_id = data.get('command_id', '')
         command = data.get('command', '')
-        params = data.get('params', {})
+        params = data.get('params', {}) or {}
 
         self.get_logger().info(f'Received command: {command} (id={command_id})')
 
-        # Execute in background thread so we don't block the ROS2 executor
-        t = threading.Thread(
-            target=self._dispatch,
-            args=(command_id, command, params),
-            daemon=True
-        )
-        t.start()
+        try:
+            self._dispatch(command_id, command, params)
+        except Exception as exc:
+            self.get_logger().error(f'dispatch error: {exc}')
+            self._publish_result(command_id, 'failure', str(exc))
 
     def _dispatch(self, command_id: str, command: str, params: dict):
-        """Dispatch command to the appropriate handler."""
-        try:
-            if command == 'team_move':
-                success = self._handle_team_move(params)
-            elif command == 'team_wait':
-                success = self._handle_team_wait(params)
+        behavior_name = BEHAVIOR_NAME.get(command)
+        if not behavior_name:
+            self._publish_result(command_id, 'failure', f'Unknown command: {command}')
+            return
+
+        if not self._action_ready.is_set():
+            ready = self._action_client.wait_for_server(timeout_sec=GOAL_WAIT_TIMEOUT)
+            if ready:
+                self._action_ready.set()
             else:
-                self.get_logger().warn(f'Unknown command: {command}')
-                self._publish_result(command_id, 'failure', f'Unknown command: {command}')
+                self._publish_result(
+                    command_id, 'failure',
+                    f'action server {EXECUTE_BEHAVIOR_ACTION} not ready',
+                )
                 return
 
-            status = 'success' if success else 'failure'
-            self._publish_result(command_id, status)
+        behavior_args = self._build_behavior_args(command, params)
+        if behavior_args is None:
+            self._publish_result(command_id, 'failure', f'Bad params for {command}: {params}')
+            return
 
-        except Exception as e:
-            self.get_logger().error(f'Error dispatching command {command}: {e}')
-            self._publish_result(command_id, 'failure', str(e))
+        goal = BehaviorExecution.Goal()
+        goal.behavior_name = behavior_name
+        arg_keys, arg_values = self._stringify_args(behavior_args)
+        goal.arg_keys = arg_keys
+        goal.arg_values = arg_values
+        goal.input_keys = []
+        goal.input_values = []
 
-    # ------------------------------------------------------------------
-    # Command handlers
-    # ------------------------------------------------------------------
-
-    def _handle_team_move(self, params: dict) -> bool:
-        """
-        Drive a team at the given velocity for the specified duration.
-        params: {team_name, linear_x, angular_z, duration}
-        """
-        team_name = str(params.get('team_name', 'scout'))
-        linear_x = float(params.get('linear_x', 0.0))
-        angular_z = float(params.get('angular_z', 0.0))
-        duration = float(params.get('duration', 1.0))
-
-        pub = self._get_vel_pub(team_name)
         self.get_logger().info(
-            f'TeamMove: {team_name} linear_x={linear_x} angular_z={angular_z} duration={duration}s'
+            f'Dispatching behavior "{behavior_name}" with args={behavior_args}'
         )
 
-        cmd = Twist()
-        cmd.linear.x = linear_x
-        cmd.angular.z = angular_z
+        send_future = self._action_client.send_goal_async(goal)
+        send_future.add_done_callback(
+            lambda fut: self._on_goal_response(fut, command_id, behavior_name)
+        )
 
-        start = time.time()
-        # Publish at ~10 Hz for the duration
-        rate_sec = 0.1
-        while time.time() - start < duration:
-            pub.publish(cmd)
-            time.sleep(rate_sec)
+    def _build_behavior_args(self, command: str, params: dict):
+        try:
+            if command == 'team_goto':
+                team_name = str(params['team_name'])
+                members = self._resolve_members(team_name)
+                if not members:
+                    return None
+                return {
+                    'team_name': team_name,
+                    'x': float(params['x']),
+                    'y': float(params['y']),
+                    'tolerance': float(params.get('tolerance', 0.22)),
+                    'timeout': float(params.get('timeout', 60.0)),
+                    'member_ids': list(members),
+                }
+            if command == 'formation_goto':
+                members = list(params.get('members') or [])
+                if not members:
+                    return None
+                return {
+                    'x': float(params['x']),
+                    'y': float(params['y']),
+                    'tolerance': float(params.get('tolerance', 0.22)),
+                    'timeout': float(params.get('timeout', 60.0)),
+                    'member_ids': members,
+                }
+            if command == 'team_move':
+                return {
+                    'team_name': str(params.get('team_name', 'scout')),
+                    'linear_x': float(params.get('linear_x', 0.0)),
+                    'angular_z': float(params.get('angular_z', 0.0)),
+                    'duration': float(params.get('duration', 1.0)),
+                }
+            if command == 'team_wait':
+                return {
+                    'duration': float(params.get('duration', 1.0)),
+                }
+        except (KeyError, TypeError, ValueError):
+            return None
+        return None
 
-        # Stop the team
-        stop = Twist()
-        pub.publish(stop)
-        self.get_logger().info(f'TeamMove: {team_name} stopped')
-        return True
+    # ------------------------------------------------------------------ #
+    # action callbacks
+    # ------------------------------------------------------------------ #
+    def _on_goal_response(self, goal_future, command_id: str, behavior_name: str):
+        try:
+            goal_handle = goal_future.result()
+        except Exception as exc:
+            self.get_logger().error(f'send_goal failed for {behavior_name}: {exc}')
+            self._publish_result(command_id, 'failure', f'send_goal error: {exc}')
+            return
 
-    def _handle_team_wait(self, params: dict) -> bool:
-        """
-        Wait for the specified duration.
-        params: {duration}
-        """
-        duration = float(params.get('duration', 1.0))
-        self.get_logger().info(f'TeamWait: waiting {duration}s')
-        time.sleep(duration)
-        self.get_logger().info('TeamWait: done')
-        return True
+        if goal_handle is None or not goal_handle.accepted:
+            self.get_logger().warn(f'Goal rejected by action server for {behavior_name}')
+            self._publish_result(command_id, 'failure', 'goal rejected')
+            return
+
+        self.get_logger().info(f'Goal accepted for {behavior_name}; awaiting result')
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(
+            lambda fut: self._on_goal_result(fut, command_id, behavior_name)
+        )
+
+    def _on_goal_result(self, result_future, command_id: str, behavior_name: str):
+        try:
+            wrapped = result_future.result()
+        except Exception as exc:
+            self.get_logger().error(f'get_result failed for {behavior_name}: {exc}')
+            self._publish_result(command_id, 'failure', f'get_result error: {exc}')
+            return
+
+        outcome = getattr(wrapped.result, 'outcome', '') or ''
+        self.get_logger().info(
+            f'Behavior "{behavior_name}" finished: status={wrapped.status} '
+            f'outcome="{outcome}"'
+        )
+
+        # flexbe_widget/be_action_server sets outcome to 'success' on FINISHED,
+        # 'preempted' on preempt, 'failed' on BEStatus.FAILED, 'error' on ERROR.
+        if outcome == 'success':
+            self._publish_result(command_id, 'success')
+        elif outcome == 'preempted':
+            self._publish_result(command_id, 'canceled', 'preempted')
+        else:
+            self._publish_result(command_id, 'failure', outcome or 'unknown')
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = PyC2CommandHandler()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
 
