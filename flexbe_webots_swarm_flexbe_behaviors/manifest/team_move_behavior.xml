@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<behavior name="Team Move Behavior">
+
+    <executable package_path="flexbe_webots_swarm_flexbe_behaviors.team_move_behavior_sm" class="TeamMoveBehaviorSM" />
+    <tagstring>pyc2, webots, legacy</tagstring>
+    <author>PyC2</author>
+    <date>Mon Apr 20 2026</date>
+    <description>
+        Legacy team_move (timed wait + STOP). linear_x/angular_z retained for schema
+        compatibility but do not drive motion (Webots has no cmd_vel channel).
+    </description>
+
+    <!-- Contained Behaviors -->
+
+    <!-- Available Parameters -->
+    <parameter name="team_name" type="string" default="scout" />
+    <parameter name="linear_x"  type="float"  default="0.0" />
+    <parameter name="angular_z" type="float"  default="0.0" />
+    <parameter name="duration"  type="float"  default="1.0" />
+
+</behavior>

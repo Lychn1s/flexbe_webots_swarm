@@ -1,16 +1,31 @@
 #!/usr/bin/env python3
+"""Legacy TeamMove — timed wait against Webots' String/GOTO control surface.
+
+The original version published geometry_msgs/Twist to /{team}_team/cmd_vel,
+but Webots' smart_agent_controller never subscribed to cmd_vel — it only
+listens on /{team}_team/control for std_msgs/String (GOTO x y | STOP | …).
+
+The velocity/duration semantics therefore cannot be honored 1:1: we can't
+stream velocities into the Webots controller. The state is kept for
+backwards compatibility with existing behaviors (SwarmMoveExample1), but
+it now degrades to "wait `duration` seconds, then publish STOP" — the
+previous behavior (publishing Twist into a void) is gone.
+
+New tactics should use TeamGotoState or FormationGotoState.
+"""
 from flexbe_core import EventState, Logger
 from flexbe_core.proxy import ProxyPublisher
-from geometry_msgs.msg import Twist
+from std_msgs.msg import String
+
 
 class TeamMoveState(EventState):
     """
-    控制整个集群移动
+    Legacy team move — timed wait + STOP on /{team}_team/control.
 
     -- team_name    string    集群名称 ('scout' 或 'carrier')
-    -- linear_x     float     前进速度
-    -- angular_z    float     转向速度
-    -- duration     float     持续时间（秒）
+    -- linear_x     float     (保留字段，不再影响运动；Webots 不接 cmd_vel)
+    -- angular_z    float     (保留字段，不再影响运动)
+    -- duration     float     等待时间（秒），到点后对该 team 发一次 STOP
 
     <= done                   完成
     <= failed                 失败
@@ -24,45 +39,35 @@ class TeamMoveState(EventState):
         self._angular_z = angular_z
         self._duration = duration
         self._start_time = None
-        self._topic = f'/{team_name}_team/cmd_vel'
+        self._topic = f'/{team_name}_team/control'
 
-        # 使用 ProxyPublisher
-        self._pub = ProxyPublisher({self._topic: Twist})
+        self._pub = ProxyPublisher({self._topic: String})
 
     def on_enter(self, userdata):
-        """进入状态时执行"""
         from flexbe_core.core.ros_state import RosState
         self._start_time = RosState._node.get_clock().now()
-        Logger.loginfo(f'{self._team_name} team moving: linear={self._linear_x}, angular={self._angular_z}')
+        Logger.loginfo(
+            f'{self._team_name} team move (legacy timed wait): '
+            f'linear={self._linear_x}, angular={self._angular_z}, duration={self._duration}s'
+        )
 
     def execute(self, userdata):
-        """循环执行"""
         try:
             from flexbe_core.core.ros_state import RosState
-            # 发布速度指令
-            cmd = Twist()
-            cmd.linear.x = float(self._linear_x)
-            cmd.angular.z = float(self._angular_z)
-            self._pub.publish(self._topic, cmd)
-
-            # 检查是否超时
             elapsed = (RosState._node.get_clock().now() - self._start_time).nanoseconds / 1e9
             if elapsed >= self._duration:
                 return 'done'
-
-        except Exception as e:
-            Logger.logerr(f'Error in execute: {e}')
+        except Exception as exc:
+            Logger.logerr(f'Error in TeamMoveState.execute: {exc}')
             return 'failed'
 
         return None
 
     def on_exit(self, userdata):
-        """退出状态时停止机器人"""
         try:
-            cmd = Twist()
-            cmd.linear.x = 0.0
-            cmd.angular.z = 0.0
-            self._pub.publish(self._topic, cmd)
-            Logger.loginfo(f'{self._team_name} team stopped')
-        except Exception as e:
-            Logger.logerr(f'Error stopping team: {e}')
+            stop_msg = String()
+            stop_msg.data = 'STOP'
+            self._pub.publish(self._topic, stop_msg)
+            Logger.loginfo(f'{self._team_name} team STOP sent')
+        except Exception as exc:
+            Logger.logerr(f'Error stopping team: {exc}')

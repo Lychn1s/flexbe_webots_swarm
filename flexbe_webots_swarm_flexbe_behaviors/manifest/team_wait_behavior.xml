@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<behavior name="Team Wait Behavior">
+
+    <executable package_path="flexbe_webots_swarm_flexbe_behaviors.team_wait_behavior_sm" class="TeamWaitBehaviorSM" />
+    <tagstring>pyc2, webots</tagstring>
+    <author>PyC2</author>
+    <date>Mon Apr 20 2026</date>
+    <description>
+        Simple wait behavior (seconds).
+    </description>
+
+    <!-- Contained Behaviors -->
+
+    <!-- Available Parameters -->
+    <parameter name="duration" type="float" default="1.0" />
+
+</behavior>

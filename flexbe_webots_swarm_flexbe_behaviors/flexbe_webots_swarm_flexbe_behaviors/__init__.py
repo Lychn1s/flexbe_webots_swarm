@@ -4,5 +4,7 @@
 """FlexBE Behaviors for Webots Swarm."""
 
 from .swarmmoveexample1_sm import SwarmMoveExample1SM
-from .example_behavior_sm import ExampleBehaviorSM
-from .example_action_state_behavior_sm import ExampleActionStateBehaviorSM
+from .team_goto_behavior_sm import TeamGotoBehaviorSM
+from .formation_goto_behavior_sm import FormationGotoBehaviorSM
+from .team_move_behavior_sm import TeamMoveBehaviorSM
+from .team_wait_behavior_sm import TeamWaitBehaviorSM

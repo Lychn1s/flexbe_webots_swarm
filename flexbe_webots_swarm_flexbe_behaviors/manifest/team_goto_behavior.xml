@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<behavior name="Team Goto Behavior">
+
+    <executable package_path="flexbe_webots_swarm_flexbe_behaviors.team_goto_behavior_sm" class="TeamGotoBehaviorSM" />
+    <tagstring>pyc2, webots, goto</tagstring>
+    <author>PyC2</author>
+    <date>Mon Apr 20 2026</date>
+    <description>
+        Drive every member of a team to absolute (x, y) via Webots String/GOTO.
+        Parameters: team_name, x, y, tolerance, timeout, member_ids (JSON).
+    </description>
+
+    <!-- Contained Behaviors -->
+
+    <!-- Available Parameters -->
+    <parameter name="team_name"  type="string" default="carrier" />
+    <parameter name="x"          type="float"  default="0.0" />
+    <parameter name="y"          type="float"  default="0.0" />
+    <parameter name="tolerance"  type="float"  default="0.22" />
+    <parameter name="timeout"    type="float"  default="60.0" />
+    <parameter name="member_ids" type="string" default="[]" />
+
+</behavior>

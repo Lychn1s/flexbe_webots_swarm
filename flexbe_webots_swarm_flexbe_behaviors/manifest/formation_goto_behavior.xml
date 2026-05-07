@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<behavior name="Formation Goto Behavior">
+
+    <executable package_path="flexbe_webots_swarm_flexbe_behaviors.formation_goto_behavior_sm" class="FormationGotoBehaviorSM" />
+    <tagstring>pyc2, webots, formation, goto</tagstring>
+    <author>PyC2</author>
+    <date>Mon Apr 20 2026</date>
+    <description>
+        Drive a named member list to (x, y) through formation_coordinator.
+        Parameters: x, y, tolerance, timeout, member_ids (JSON).
+    </description>
+
+    <!-- Contained Behaviors -->
+
+    <!-- Available Parameters -->
+    <parameter name="x"          type="float"  default="0.0" />
+    <parameter name="y"          type="float"  default="0.0" />
+    <parameter name="tolerance"  type="float"  default="0.22" />
+    <parameter name="timeout"    type="float"  default="60.0" />
+    <parameter name="member_ids" type="string" default="[]" />
+
+</behavior>
